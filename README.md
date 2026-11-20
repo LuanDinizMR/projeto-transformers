@@ -1,25 +1,54 @@
 # Projeto Transformers
 
-Mini-projeto de Inteligência Artificial para previsão de séries temporais meteorológicas usando **Transformer Encoder (PyTorch)** e o dataset **Jena Climate 2009–2016**.
+Mini-projeto de Inteligência Artificial que utiliza um **Transformer Encoder**, implementado em Python com PyTorch, para previsão de séries temporais meteorológicas do dataset **Jena Climate 2009–2016**.
 
-## Como executar
+O projeto possui dois objetivos:
+- Prever o próximo token, correspondente a 1 hora.
+- Prever os próximos 24 tokens, correspondentes a 24 horas.
 
-1. Instale as dependências:
-   ```bash
-   pip install -r requirements.txt
-   ```
+Também foram realizados experimentos variando a quantidade de tokens de entrada, a dimensão do embedding, o número de cabeças de atenção e a quantidade de blocos codificadores.
 
-2. [Baixe o Jena Climate](https://storage.googleapis.com/tensorflow/tf-keras-datasets/jena_climate_2009_2016.csv.zip) e extraia o CSV para `data/jena_climate_2009_2016.csv`.
+## Instalação
 
-3. Execute os experimentos:
-   ```bash
-   # Previsão da próxima hora
-   python main.py --horizon 1 --epochs 20
+Instale as dependências:
 
-   # Previsão das próximas 24 horas
-   python main.py --horizon 24 --epochs 20
-   ```
+```bash
+pip install -r requirements.txt
+```
 
-Os gráficos e as métricas são salvos na pasta `results/`. Os resultados dos experimentos realizados estão disponíveis em `results.zip`.
+Baixe o [Jena Climate 2009–2016](https://storage.googleapis.com/tensorflow/tf-keras-datasets/jena_climate_2009_2016.csv.zip) e extraia o arquivo CSV para:
 
-O relatório do trabalho está disponível em **`2026_Relatório_LuanDinizMazaroRodovalho.pdf`**.
+`data/jena_climate_2009_2016.csv`
+
+## Execução
+
+**Previsão de 1 hora:**
+
+```bash
+python main.py --horizon 1 --epochs 20
+```
+
+**Previsão de 24 horas:**
+
+```bash
+python main.py --horizon 24 --epochs 20
+```
+
+## Resultados
+
+Os resultados dos seis experimentos estão disponíveis na pasta `results/`, incluindo:
+
+- Métricas de avaliação (MAE e RMSE).
+- Gráficos de perda de treinamento e validação.
+- Comparações entre temperaturas reais e previstas.
+- Mapas de atenção.
+- Modelos treinados.
+
+## Relatório
+
+O relatório completo está disponível em:
+
+[Relatório — Transformers](2026_Relatório_LuanDinizMazaroRodovalho.pdf)
+
+**Autor:** Luan Diniz Mazaro Rodovalho  
+**Instituição:** Universidade Federal de Uberlândia (UFU)
