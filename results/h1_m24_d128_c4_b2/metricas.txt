@@ -1,0 +1,4 @@
+RMSE normalizado: 0.256868
+MAE normalizado: 0.114259
+RMSE temperatura (°C): 0.522154
+MAE temperatura (°C): 0.356324

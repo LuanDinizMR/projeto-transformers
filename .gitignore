@@ -10,13 +10,9 @@ __pycache__/
 data/*
 !data/.gitkeep
 
-# Resultados gerados
-results/*
-!results/.gitkeep
-
 # Arquivos do sistema
 .DS_Store
 Thumbs.db
 
-# Configurações locais
+# Configuraï¿½ï¿½es locais
 .env
