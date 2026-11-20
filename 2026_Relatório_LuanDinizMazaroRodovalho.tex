@@ -1,0 +1,178 @@
+\documentclass[conference,a4paper]{IEEEtran}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage[brazil]{babel}
+\usepackage{microtype}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{graphicx}
+\usepackage{balance}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\hypersetup{colorlinks=true,linkcolor=black,urlcolor=blue!55!black,citecolor=blue!45!black,pdftitle={Atenção em séries temporais: previsão climática com Transformer Encoder},pdfauthor={Luan Diniz Mazaro Rodovalho}}
+\renewcommand{\arraystretch}{1.12}
+\setlength{\tabcolsep}{3pt}
+\title{Atenção em séries temporais: previsão meteorológica multivariada com Transformer Encoder}
+\author{\IEEEauthorblockN{Luan Diniz Mazaro Rodovalho}
+\IEEEauthorblockA{Universidade Federal de Uberlândia (UFU)\\Brasil}}
+\begin{document}
+\maketitle
+\begin{abstract}
+Este trabalho investiga o uso de um codificador Transformer para previsão multivariada de dados meteorológicos da série Jena Climate 2009--2016. São considerados dois objetivos: prever o próximo token de uma hora e prever conjuntamente 24 tokens futuros, correspondentes a 24 horas. As medições são organizadas em janelas temporais, normalizadas com estatísticas exclusivas do treinamento e processadas por blocos de autoatenção. Foram realizados seis experimentos, incluindo variações do histórico, da dimensão de representação, do número de cabeças e da profundidade. Na previsão de uma hora, a configuração com quatro blocos obteve RMSE de temperatura de 0,504~\textdegree C; para 24 horas, o modelo inicial obteve 2,412~\textdegree C. Curvas de perda, exemplos de previsão e mapas médios de atenção são utilizados para discutir aprendizado, dependências temporais e limitações.
+\end{abstract}
+\begin{IEEEkeywords}
+Transformer, séries temporais, autoatenção, previsão meteorológica, aprendizado profundo.
+\end{IEEEkeywords}
+
+\section{Introdução}
+O objetivo deste mini-projeto é investigar um \emph{Transformer Encoder} aplicado ao conjunto Jena Climate 2009--2016. Em particular, avaliam-se (i) a previsão do próximo token temporal e (ii) a previsão direta de tokens consecutivos que representam 24 horas. Também se examina o efeito de quatro hiperparâmetros: número de tokens de entrada, dimensão do \emph{embedding}, quantidade de cabeças de atenção e número de blocos codificadores. Além dos erros de previsão, são analisadas as curvas de perda e matrizes de atenção, conforme o enunciado do projeto.
+
+A implementação foi desenvolvida em Python/PyTorch e está disponível em \url{https://github.com/LuanDinizMR/projeto-transformers}.
+
+\section{Dados e preparação}
+\subsection{Dataset, estatísticas e limpeza}
+Utilizou-se o conjunto \emph{Jena Climate 2009--2016}, composto por cerca de 420 mil registros coletados em intervalos de dez minutos e 14 variáveis meteorológicas, como pressão, temperatura, umidade e vento \cite{jena}. A Tabela~\ref{tab:estatisticas} apresenta médias e desvios-padrão de variáveis selecionadas, obtidos das estatísticas do conjunto de treinamento armazenadas com o modelo. Os valores descrevem apenas esse subconjunto, não toda a série.
+
+\begin{table}[!t]
+\centering
+\caption{Estatísticas do conjunto de treinamento após limpeza.}
+\label{tab:estatisticas}
+\footnotesize
+\begin{tabular}{@{}lrr@{}}
+\toprule
+Variável & Média & Desvio-padrão \\
+\midrule
+Pressão (mbar) & 988,656 & 8,297 \\
+Temperatura ($^\circ$C) & 9,108 & 8,654 \\
+Umidade relativa (\%) & 75,904 & 16,557 \\
+Velocidade do vento (m/s) & 2,155 & 1,530 \\
+Rajada máxima (m/s) & 3,561 & 2,314 \\
+Direção do vento (graus) & 173,442 & 87,674 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Na inspeção dos dados, foram identificados 18 valores sentinela $-9999$ na velocidade do vento e 20 na velocidade máxima do vento, todos concentrados no intervalo destinado à validação. Esses valores representam medições inválidas e foram substituídos por zero, seguindo uma convenção utilizada para este conjunto de dados. Sem a limpeza, a perda de validação permanecia próxima de 1.295, apesar de a perda de treinamento ser inferior a 0,12; após a correção, ambas passaram a apresentar escalas comparáveis. Esse diagnóstico reforça a importância do pré-processamento antes da avaliação do modelo.
+
+\subsection{Partição e tokenização temporal}
+A série foi dividida cronologicamente em 70\% para treinamento, 15\% para validação e 15\% para teste. Para cada variável $j$, a transformação $z=(x-\mu_j)/\sigma_j$ foi ajustada \emph{somente} nos dados de treinamento e aplicada aos três conjuntos. Não houve embaralhamento dos registros antes da separação. As janelas são construídas dentro de cada partição, sem cruzar suas fronteiras.
+
+Cada token contém seis medições consecutivas (uma hora), com 14 variáveis por medição. O vetor bruto de token tem, portanto, $6\times14=84$ atributos. Não foi empregada média horária: os seis registros são concatenados para preservar a granularidade de dez minutos. A configuração inicial utiliza $m=24$ tokens (histórico $L=24$ horas); outra configuração utiliza $m=48$ ($L=48$ horas). Janelas deslizantes avançam um token de cada vez, produzindo 49.040 exemplos de treino, 10.489 de validação e 10.489 de teste para o objetivo de uma hora. No objetivo de 24 horas, cada saída contém 24 tokens, isto é, $24\times84=2.016$ valores.
+
+\section{Modelo e procedimento experimental}
+\subsection{Arquitetura do codificador}
+Cada token de entrada $\mathbf{x}_t\in\mathbb{R}^{84}$ é transformado por projeção linear em $\mathbf{e}_t\in\mathbb{R}^{d}$, à qual se soma uma codificação posicional senoidal. Em seguida, os $m$ tokens são processados por blocos codificadores. A autoatenção de cada cabeça utiliza consultas, chaves e valores produzidos a partir das representações dos tokens:
+\begin{equation}
+ \mathrm{Attention}(Q,K,V)=\mathrm{softmax}\!\left(\frac{QK^\top}{\sqrt{d_k}}\right)V.
+\end{equation}
+As várias cabeças permitem construir diferentes representações de relacionamentos temporais. Cada bloco emprega \emph{LayerNorm} antes da atenção e da rede \emph{feed-forward}, conexões residuais, \emph{dropout} de 0,1 e uma rede interna com expansão de $d$ para $4d$, ativação GELU e retorno a $d$. Trata-se de autoatenção bidirecional \emph{dentro da janela histórica}; nenhum token futuro é fornecido ao codificador.
+
+Após os blocos, utiliza-se a representação do último token histórico, seguida de normalização e de uma camada linear que prevê diretamente $h\times84$ valores, reorganizados em $h$ tokens futuros. Assim, $h=1$ e $h=24$ são resolvidos pelo mesmo desenho de rede, mas com diferentes dimensões de saída. A previsão de 24 horas é conjunta, sem realimentação autoregressiva dos valores previstos.
+
+\subsection{Treinamento, hiperparâmetros e métricas}
+Todos os treinamentos usam otimizador Adam, taxa inicial de aprendizado $10^{-3}$, lote de 64 exemplos, 20 épocas e semente pseudoaleatória 42. A execução informada utilizou CPU. A função de perda é o erro quadrático médio (MSE), adequado à regressão de variáveis contínuas e calculado sobre os valores normalizados:
+\begin{equation}
+ \mathrm{MSE}=\frac{1}{N}\sum_{i=1}^{N}(\hat y_i-y_i)^2.
+\end{equation}
+O MSE penaliza mais intensamente erros grandes. Os pesos selecionados são os da época com menor perda de validação. A avaliação final usa RMSE e MAE de todas as variáveis na escala normalizada; para temperatura, os valores previstos e reais são desnormalizados para reportar RMSE e MAE em graus Celsius.
+
+A Tabela~\ref{tab:config} mostra as seis configurações testadas. Em E3--E6 varia-se um hiperparâmetro por vez em relação a E1, mantendo o horizonte em uma hora; E2 compara outro horizonte com a arquitetura inicial.
+
+\begin{table}[!t]
+\centering
+\caption{Configurações experimentais. $m$: tokens históricos; $h$: tokens futuros; $d$: dimensão; $c$: cabeças; $b$: blocos.}
+\label{tab:config}
+\footnotesize
+\begin{tabular}{@{}llrrrrr@{}}
+\toprule
+ID & Descrição & $m$ & $h$ & $d$ & $c$ & $b$ \\
+\midrule
+E1 & Inicial (1h) & 24 & 1 & 64 & 4 & 2 \\
+E2 & Horizonte de 24h & 24 & 24 & 64 & 4 & 2 \\
+E3 & Mais histórico & 48 & 1 & 64 & 4 & 2 \\
+E4 & Maior dimensão & 24 & 1 & 128 & 4 & 2 \\
+E5 & Mais cabeças & 24 & 1 & 64 & 8 & 2 \\
+E6 & Mais blocos & 24 & 1 & 64 & 4 & 4 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Resultados e discussão}
+\subsection{Erros de previsão}
+Os resultados do conjunto de teste são mostrados na Tabela~\ref{tab:metricas}. Na previsão de uma hora, E6 apresentou os menores erros \emph{de temperatura}, com RMSE de 0,504~$^\circ$C e MAE de 0,343~$^\circ$C, reduções de aproximadamente 2,5\% e 3,4\% em relação ao E1. Entretanto, E1 obteve o menor RMSE normalizado considerando conjuntamente as 14 variáveis (0,256356, contra 0,256738 de E6). Não há, portanto, superioridade uniforme de uma configuração em todas as métricas.
+
+\begin{table}[!t]
+\centering
+\caption{Resultados no teste. As duas primeiras métricas abrangem todas as variáveis em escala normalizada; as duas últimas se referem à temperatura.}
+\label{tab:metricas}
+\footnotesize
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+ & \multicolumn{2}{c}{Todas as variáveis} & \multicolumn{2}{c}{Temperatura ($^\circ$C)} \\
+ID & RMSE & MAE & RMSE & MAE \\
+\midrule
+E1 & \textbf{0,256356} & 0,113388 & 0,517569 & 0,354476 \\
+E2 & 0,506768 & 0,330482 & 2,411583 & 1,825502 \\
+E3 & 0,257965 & 0,116573 & 0,562217 & 0,401988 \\
+E4 & 0,256868 & 0,114259 & 0,522154 & 0,356324 \\
+E5 & 0,257362 & 0,113841 & 0,520744 & 0,357784 \\
+E6 & 0,256738 & \textbf{0,112493} & \textbf{0,504389} & \textbf{0,342578} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Ampliar o histórico para 48 horas (E3) aumentou o erro de temperatura em relação a E1; aumentar a dimensão para 128 (E4) ou o número de cabeças para oito (E5) também não trouxe melhora nessas métricas. Já a previsão direta de 24 horas (E2) apresentou RMSE de temperatura de 2,412~$^\circ$C, aproximadamente 4,7 vezes o valor de E1. A tarefa é distinta: nela o modelo precisa gerar, de uma só vez, uma sequência futura muito mais extensa, de modo que a comparação não constitui uma avaliação isolada de hiperparâmetros.
+
+\subsection{Curvas de aprendizagem}
+A Figura~\ref{fig:perdas} apresenta as curvas de MSE do modelo inicial de uma hora e da previsão de 24 horas. Em E1, a perda de treino diminui rapidamente nas primeiras épocas e depois se estabiliza; a validação oscila em nível próximo, sem a discrepância extrema observada antes da correção dos valores sentinela. Em E2, embora a perda de treino siga diminuindo, a curva de validação apresenta seu mínimo nas primeiras épocas e tende a crescer posteriormente. Esse afastamento é compatível com \emph{overfitting}, motivo pelo qual foi utilizado o \emph{checkpoint} com melhor validação.
+
+\begin{figure*}[!t]
+\centering
+\includegraphics[width=0.93\textwidth]{figuras/perdas_comparado.png}
+\caption{Perdas de treinamento e validação em duas tarefas. Os gráficos originais usam índices de época começando em zero.}
+\label{fig:perdas}
+\end{figure*}
+
+A Figura~\ref{fig:previsoes} mostra exemplos individuais de temperatura. No horizonte curto, as previsões ficam próximas dos registros reais na hora seguinte. Em 24 horas, o modelo acompanha parte da tendência geral, mas suaviza oscilações e apresenta divergências de magnitude e momento. Essas visualizações são exemplos ilustrativos do comportamento dos modelos, enquanto as métricas da Tabela~\ref{tab:metricas} consideram todo o conjunto de teste.
+
+\begin{figure*}[!t]
+\centering
+\includegraphics[width=0.93\textwidth]{figuras/temperatura_prevista_comparado.png}
+\caption{Temperatura real e prevista em uma amostra de teste para cada horizonte.}
+\label{fig:previsoes}
+\end{figure*}
+
+\subsection{Mapas médios de atenção}
+Foram extraídos pesos de atenção da \emph{primeira cabeça do último bloco} para as janelas do conjunto de teste. Em seguida, realizou-se a média dessas matrizes sobre todas as amostras, obtendo mapas $m\times m$, com as posições de consulta nas linhas e de chave nas colunas. A Figura~\ref{fig:atencao} compara os dois horizontes com a configuração inicial de arquitetura. No E1, observa-se concentração de pesos nas posições finais da janela, sugerindo que essa cabeça recorre intensamente às horas mais recentes. No E2, a atenção está mais distribuída pelo histórico, mantendo maior peso em regiões próximas do fim da janela.
+
+\begin{figure}[!t]
+\centering
+\includegraphics[width=\columnwidth]{figuras/atencao_horizontes.png}
+\caption{Mapas de atenção médios para E1 (1h) e E2 (24h); cada painel corresponde à primeira cabeça da última camada, com sua própria escala de cores.}
+\label{fig:atencao}
+\end{figure}
+
+A Figura~\ref{fig:cabecas} evidencia que alterar o número de cabeças também modifica a distribuição observada: no E5, a primeira cabeça concentra pesos em posições mais antigas, sobretudo perto do quarto token, enquanto no E1 a mesma posição de cabeça privilegia as horas finais. Isso não indica que uma distribuição seja intrinsecamente melhor, como confirmam os erros de temperatura próximos entre E1 e E5.
+
+\begin{figure}[!t]
+\centering
+\includegraphics[width=\columnwidth]{figuras/atencao_cabecas.png}
+\caption{Primeira cabeça da última camada nos modelos com quatro (E1) e oito (E5) cabeças, ambos prevendo uma hora.}
+\label{fig:cabecas}
+\end{figure}
+
+Os mapas não são explicações causais das previsões: representam apenas uma das cabeças e uma agregação sobre muitas janelas. Cabeças diferentes podem apresentar outros padrões. Além disso, a média tende a ocultar comportamentos particulares de eventos meteorológicos e horários específicos. Ainda assim, os mapas demonstram que os pesos de autoatenção podem ser recuperados e associados à organização temporal das entradas.
+
+\balance
+\section{Conclusão}
+Foi implementado e avaliado um Transformer Encoder para duas tarefas de previsão meteorológica multivariada sobre janelas horárias. A arquitetura combina projeção linear, posição senoidal, autoatenção multi-cabeças, blocos \emph{feed-forward} e camada linear de regressão. Após corrigir 38 valores inválidos de vento concentrados na validação, as curvas de perda se tornaram coerentes, permitindo interpretar os treinamentos. Nas configurações de uma hora, o modelo com quatro blocos apresentou o menor RMSE de temperatura (0,504~$^\circ$C); entretanto, o modelo inicial foi ligeiramente melhor no RMSE normalizado global. No horizonte de 24 horas, os erros foram substancialmente maiores e surgiram sinais de sobreajuste nas curvas de validação.
+
+O estudo é limitado por uma única semente de execução, pela ausência de intervalos de confiança e pela apresentação de apenas uma cabeça de atenção por configuração. Como continuação, seria possível avaliar diferentes sementes, quantificar incerteza e comparar outras estratégias de previsão; tais extensões não são necessárias para os objetivos experimentais aqui apresentados.
+
+\begin{thebibliography}{9}
+\bibitem{vaswani2017} A. Vaswani et al., ``Attention Is All You Need'', \emph{Advances in Neural Information Processing Systems}, 2017. \url{https://arxiv.org/abs/1706.03762}.
+\bibitem{jena} TensorFlow, ``Jena Climate 2009--2016'' (arquivo de dados). \url{https://storage.googleapis.com/tensorflow/tf-keras-datasets/jena_climate_2009_2016.csv.zip}.
+\bibitem{pytorch} PyTorch, ``MultiheadAttention'', documentação da biblioteca. \url{https://pytorch.org/docs/stable/generated/torch.nn.MultiheadAttention.html}.
+\end{thebibliography}
+\end{document}
